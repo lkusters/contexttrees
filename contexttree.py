@@ -272,6 +272,16 @@ class fulltree(contexttree):
 class maptree(contexttree):        
     """ this one is initialized by a contexttree (counts) """
       
+    def getcountsdepth(self,depth):
+        """ get counts corresponding to certain depth"""
+        tree = self.__getcountsallnodes()
+        tree2 = dict()
+        for key,val in tree.items():
+            if len(key)==depth:
+                tree2[key] = [v for v in val]
+        
+        return tree2
+        
     def getrself(self):
         """ return rself or calculate rself if not calculated yet"""
         
@@ -297,15 +307,21 @@ class maptree(contexttree):
             self.__setleafs()
             
         rself = 0
+        newleafs = [] # it is possible that we have some leafs that
+                            # do actually not occur in the sequence
         
         symbollogprobs = dict()
         symbolcounts = self.__getcountsallnodes()
         for key in self._leafs:
-            counts = symbolcounts[key]
-            logprobs = self._counts2logprobs(counts)
-            symbollogprobs[key] = logprobs
-            rself -= sum([a*b for a,b in zip(counts,logprobs)])
+            if key in symbolcounts:
+                counts = symbolcounts[key]
+                logprobs = self._counts2logprobs(counts)
+                symbollogprobs[key] = logprobs
+                rself -= sum([a*b for a,b in zip(counts,logprobs)])
+                newleafs += [key]
+                
         self._rself = rself/self._sequencelength
+        self._leafs = newleafs
         return symbollogprobs
         
     def __setleafs(self):
@@ -427,27 +443,27 @@ class maptree(contexttree):
         branches = [] # 
         tree_pm = dict()
         # from max depth to less depth
-        for key in sorted(treepe, key=len, reverse=True):
-            if len(key)== self._maximumdepth :
+        for ctxt in sorted(treepe, key=len, reverse=True):
+            if len(ctxt)== self._maximumdepth :
                 # this is initialization
-                tree_pm[key] = treepe[key]
+                tree_pm[ctxt] = treepe[ctxt]
             else:
                 # calculate sum of children Pm
                 child_sum = 0
                 for symbol in ALPHABET:
-                    child = key+symbol
+                    child = ctxt+symbol
                     children = []
                     if child in tree_pm:
                         child_sum += tree_pm[child]
                         children.append(child)
                 # compare the values
-                if (alpha + treepe[key]) >= (alpha_inv+child_sum):   
-                    tree_pm[key] = alpha + treepe[key]
+                if (alpha + treepe[ctxt]) >= (alpha_inv+child_sum):   
+                    tree_pm[ctxt] = alpha + treepe[ctxt]
                     # this may be a leaf
                 else:
-                    tree_pm[key] = alpha_inv+child_sum
+                    tree_pm[ctxt] = alpha_inv+child_sum
                     # this may be a branch
-                    branches.append(key)
+                    branches.append(ctxt)
         # Now start at root and select leaf if in leafs
         self._leafs = self.__findleafs(branches)
         
@@ -472,7 +488,7 @@ class maptree(contexttree):
             # then look at children
             for symbol in ALPHABET:
                 leafs += self.__findleafs(branches,key+symbol)
-        elif key in self._symbolcounts:
+        else:
             leafs.append(key)
         return leafs
        
