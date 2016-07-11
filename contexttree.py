@@ -8,23 +8,28 @@ Created on Fri Jul  1 11:42:43 2016
 ALPHABET = "ACGT"
 import numpy as np
 import warnings
+import copy
 class contexttree:
     """ parent class for all the tree objects, the class object can be
     initialized with a depth and an input string for which the counts are stored
+    
+    usually this is not called externally
+    instead we use fulltree or maptree
     """
     
     def __init__(self,depth,sequence=None):
         if not isinstance(depth,int):
             raise ValueError("Invalid maximum depth",depth)
         
+        self._initialcontext = []
         self._symbolcounts = None
-        self._initialcontext = None
         self._sequencelength = 0
-        self._maximumdepth = depth  
-        if sequence == None:
-            return None
-        self._symbolcounts = self.__countsymbols(sequence)
-        return None
+        self._maximumdepth = depth 
+        self._rself = None # achievable compression rate of full source tree
+        
+        if not sequence == None: # None should only occur when self.copy is used
+            self.__countsymbols(sequence)
+            
         
     def __str__(self):
         return "contexttree of depth {0}, initcontext {1}".format(self._maximumdepth,self._initialcontext )+\
@@ -44,6 +49,19 @@ class contexttree:
                 "{0} valid of total {1} symbols".format(str(no_valid_symbols), \
                 str(len(sequence))),ALPHABET
                 )
+                
+    def __verifytreedephts(self,tree):
+        """ verify that the input tree has the same depth as the source
+        """
+        if not tree._maximumdepth == self._maximumdepth:
+            raise ValueError("trees cannot interact, as their depth is "+\
+            "not matching ",self._maximumdepth,tree._maximumdepth)
+    
+    def _verifysametype(self,tree):
+        """ verify that both trees are same type and depth"""
+        self.__verifytreedephts(tree)
+        if not(type(tree)==type(self)):
+            raise ValueError("both trees should be of same type",type(self),type(tree))
                 
     def __countsymbols(self,sequence):
         """ Count the symbol occurences for a context tree, for the contexts at 
@@ -97,68 +115,68 @@ class contexttree:
                 counts[context] = [0 for sym in range(len(ALPHABET))]
                 counts[context][keys[symbol]] += 1
             context = symbol+context[:-1]
-        self._initialcontext  = initcontext
+        self._initialcontext += [initcontext]
         self._sequencelength += len(sequence)
-        return counts
+        
+        self._symbolcounts = counts
+        self._rself = None # just became invalid in case it was set before
     
     def updatesymbolcounts(self,sequence):
-        """ Count the symbol occurences for a context tree, for the contexts at 
-            maximum depth and return dict()
+        """ update symbol counts: call __countsymbols()
     
         Keyword arguments:
         sequence:   (str) The sequence for which we count the symbolcounts
         
-        Returns:
-        counts: (dict): keys are occuring contexts (tuple), counts are 
-                            symbol counts for symbols of alphabet given context
         """
         
-#        if self._symbolcounts == None:
-#            raise ValueError(
-#                "symbolcounts cannot be updated as there are none")
-        self._symbolcounts = self.__countsymbols(sequence)
-    def combinecontexttrees(self,tree):
+        if self._symbolcounts == None:
+            warnings.warn("cannot update, since no symbols were counted "+\
+            "yet, initializing with current input sequence instead")
+        
+        self.__countsymbols(sequence)
+        
+    def combine(self,tree):
         """ add the input tree to this tree
         """
     
-        if not tree._maximumdepth == self._maximumdepth:
-            raise ValueError("cannot combine the trees as their depth is "+\
-            "not matching ",self._maximumdepth,tree._maximumdepth)
-            
-        counts = self._symbolcounts
-        for key, val in tree._symbolcounts.items():
-            if key in counts:
-                counts[key] = [a+b for (a,b) in zip(counts[key],val)]
-            else:
-                counts[key] = val
-        self._sequencelength += tree._sequencelength
-    def copycontexttree(self):
+        self.__verifytreedephts(tree)
+        
+        if self._symbolcounts == None and tree._symbolcounts == None:
+            warnings.warn("combining with an empty tree")
+            # do nothing
+        elif tree._symbolcounts == None:
+            warnings.warn("combining with an empty tree")
+            # do nothing
+        elif self._symbolcounts == None:
+            warnings.warn("combining with an empty tree")
+            # copy tree to self
+            for attr in vars(tree):
+                setattr(self, attr, getattr(tree, attr))
+        else:
+            for key, val in tree._symbolcounts.items():
+                if key in self._symbolcounts:
+                    self._symbolcounts[key] = [a+b for (a,b) in zip(self._symbolcounts[key],val)]
+                else:
+                    self._symbolcounts[key] = val
+            self._sequencelength += tree._sequencelength
+            self._initialcontext += [tree._initialcontext]
+            self._rself = None # just became invalid
+        
+    def getcopy(self):
         """ Make a copy of this tree and return it
         """
         
         tree = contexttree(self._maximumdepth)
-        tree._symbolcounts = dict(self._symbolcounts)
-        tree._sequencelength = self._sequencelength
-        tree._initialcontext = self._initialcontext
+        for attr in vars(self):
+            setattr(tree, attr, copy.deepcopy(getattr(self, attr)))
+    
         return tree
+                
           
 class fulltree(contexttree):
     """ inherits from contexttree, adds functionality of rates 
     probabilities and rates calculation
     """
-    
-    def __verifytreedephts(self,tree):
-        """ verify that the input tree has the same depth as the source
-        """
-        if not tree._maximumdepth == self._maximumdepth:
-            raise ValueError("cannot combine the trees as their depth is "+\
-            "not matching ",self._maximumdepth,tree._maximumdepth)
-    def __verifyfulltree(self,tree):
-        """ verify that the compared tree is a fulltree of correct depth"""
-        self.__verifytreedephts(tree)
-        if not(type(tree)==type(self)):
-            raise ValueError("cannot combine the trees as the tree type is "+\
-            "not matching ",type(tree),type(self))
         
     def __counts2logprobs(self,counts):
         """ convert symbolcounts to probabilities
@@ -167,24 +185,36 @@ class fulltree(contexttree):
         logprobs = [np.log2(c+1/2) - denum for c in counts]
         return logprobs
     
-    def getprobs(self):
+    def __getprobs(self):
         """ Compute the corresponding probabilities of the symbols in log2-space
         given the counts and return rself
         """
         rself = 0
+        
         symbollogprobs = dict()
         for key,counts in self._symbolcounts.items():
             logprobs = self.__counts2logprobs(counts)
             symbollogprobs[key] = logprobs
             rself -= sum([a*b for a,b in zip(counts,logprobs)])
-        return symbollogprobs,rself/self._sequencelength
+        self._rself = rself/self._sequencelength
+        return symbollogprobs
+      
+    def getrself(self):
+        """ return rself or calculate rself if not calculated yet"""
+        
+        if self._rself == None:
+            self.__getprobs()
+            
+        return self._rself
+        
     def getratetree(self,tree):
         """ estimate the achievable compression rate when applying this
         tree model for compression of the sequence corresponding to the input
-        tree
+        contexttree
         """
-        self.__verifytreedephts(tree)
-        symbolprobs,_ = self.getprobs()
+        
+        self._verifysametype(tree)
+        symbolprobs = self.__getprobs()
         
         rate = 0
         for key,val in tree._symbolcounts.items():
@@ -200,20 +230,21 @@ class fulltree(contexttree):
         
         raise ValueError(
                 "Sorry this functionality has not been implemented yet")
+                
     def getdivergence(self,tree):
         """ This function returns the estimated KL-Divergence of the probability
         distribution of the own tree in comparison to other tree
         
         We use D(q_z||p_x) ~ lim_{n-> inf} 1/n log2(q_z(Z)/p_x(Z))
+         = Rother - Rself  (for sequence Z)
         
+        Here 'tree' corresponds to the (model of the) input sequence Z
         Here q_z is the probability distribution of this tree and p_x 
         corresponds to the other tree
         """
         
-        
-        self.__verifyfulltree(tree)
-        _,rself = self.getprobs()
-        rother = tree.getratetree(self)
+        rother = self.getratetree(tree)
+        rself = tree.getrself()
         
         divergence = rother-rself
         return divergence
@@ -225,20 +256,18 @@ class fulltree(contexttree):
         div1 = self.getdivergence(tree)
         div2 = tree.getdivergence(self)
         
-        print(div1)
-        print(div2)
         return (div1+div2)/2
-    def copycontexttree(self):
+    def getcopy(self):
         """ Make a copy of this tree and return it
         """
         
         tree = fulltree(self._maximumdepth)
-        tree._symbolcounts = dict(self._symbolcounts)
-        tree._sequencelength = self._sequencelength
-        tree._initialcontext = self._initialcontext
+        for attr in vars(self):
+            setattr(tree, attr, copy.deepcopy(getattr(self, attr)))
+    
         return tree
-        
-        
+    
+
        
             
 
