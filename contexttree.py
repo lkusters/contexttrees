@@ -300,7 +300,7 @@ class maptree(contexttree):
         
     def __getprobs(self):
         """ Compute the corresponding probabilities of the symbols in log2-space
-        given the counts and leafs
+        given the counts and leafs and return logprobs and counts in the leafs
         """
         if self._rself == None:
             """ not yet initialized"""
@@ -311,18 +311,20 @@ class maptree(contexttree):
                             # do actually not occur in the sequence
         
         symbollogprobs = dict()
+        symbolcountsleafs = dict()
         symbolcounts = self.__getcountsallnodes()
         for key in self._leafs:
             if key in symbolcounts:
                 counts = symbolcounts[key]
                 logprobs = self._counts2logprobs(counts)
                 symbollogprobs[key] = logprobs
+                symbolcountsleafs[key] = [count for count in counts]
                 rself -= sum([a*b for a,b in zip(counts,logprobs)])
                 newleafs += [key]
                 
         self._rself = rself/self._sequencelength
         self._leafs = newleafs
-        return symbollogprobs
+        return symbollogprobs,symbolcountsleafs
         
     def __setleafs(self):
         
@@ -336,24 +338,6 @@ class maptree(contexttree):
         treepe = self.__getpe(allcounts)
         self.__getpm(treepe)
         
-#        r_self = [0 for symbol in ALPHABET]
-#        model = dict()
-#        returncounts = dict()
-#        length = 0
-#        for k in leafs:
-#            if k in tree:
-#                counts = tree[k]
-#                r = get_rates(counts)
-#                helpvar = [x[0]*x[1] for x in zip(counts,r)]
-#                r_self = [sum(x) for x in zip(r_self,helpvar)]
-#                length += sum(counts)
-#                model[k] = r
-#                returncounts[k] = counts
-#            else:
-#                # this context has not occured in the sequence
-#                pass
-#        r_self = -sum(r_self)/length
-#        return model,r_self,returncounts
     
     def __getcountsallnodes(self):
         """ Given the symbol counts at maximum depth, recover the counts at 
