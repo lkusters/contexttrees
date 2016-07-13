@@ -32,7 +32,7 @@ class contexttree:
             
         
     def __str__(self):
-        return "contexttree of depth {0}, initcontext {1}".format(self._maximumdepth,self._initialcontext )+\
+        return "tree: {2} of depth {0}, initcontext {1}".format(self._maximumdepth,self._initialcontext,type(self) )+\
         "\n symbolcounts: \n {0}".format(str(self._symbolcounts))
     
     def __verifyinputsequence(self,sequence):
@@ -63,6 +63,13 @@ class contexttree:
         if not(type(tree)==type(self)):
             raise ValueError("both trees should be of same type",type(self),type(tree))
                 
+    def _counts2logprobs(self,counts):
+        """ convert symbolcounts to probabilities
+        """
+        denum = np.log2(sum(counts)+len(ALPHABET)/2)
+        logprobs = [np.log2(c+1/2) - denum for c in counts]
+        return logprobs
+        
     def __countsymbols(self,sequence):
         """ Count the symbol occurences for a context tree, for the contexts at 
             maximum depth and return dict()
@@ -178,12 +185,6 @@ class fulltree(contexttree):
     probabilities and rates calculation
     """
         
-    def __counts2logprobs(self,counts):
-        """ convert symbolcounts to probabilities
-        """
-        denum = np.log2(sum(counts)+len(ALPHABET)/2)
-        logprobs = [np.log2(c+1/2) - denum for c in counts]
-        return logprobs
     
     def __getprobs(self):
         """ Compute the corresponding probabilities of the symbols in log2-space
@@ -193,7 +194,7 @@ class fulltree(contexttree):
         
         symbollogprobs = dict()
         for key,counts in self._symbolcounts.items():
-            logprobs = self.__counts2logprobs(counts)
+            logprobs = self._counts2logprobs(counts)
             symbollogprobs[key] = logprobs
             rself -= sum([a*b for a,b in zip(counts,logprobs)])
         self._rself = rself/self._sequencelength
@@ -267,7 +268,213 @@ class fulltree(contexttree):
     
         return tree
     
-
+""" =========================================== """
+class maptree(contexttree):        
+    """ this one is initialized by a contexttree (counts) """
+      
+    def getcountsdepth(self,depth):
+        """ get counts corresponding to certain depth"""
+        tree = self.__getcountsallnodes()
+        tree2 = dict()
+        for key,val in tree.items():
+            if len(key)==depth:
+                tree2[key] = [v for v in val]
+        
+        return tree2
+        
+    def getrself(self):
+        """ return rself or calculate rself if not calculated yet"""
+        
+        if self._rself == None:
+            self.__getprobs()
+            
+        return self._rself
+    def getleafs(self):
+        """ return the labels of the leafs"""
+        
+        if self._rself == None:
+            """ not yet initialized"""
+            self.__setleafs()
+            
+        return self._leafs
+        
+    def __getprobs(self):
+        """ Compute the corresponding probabilities of the symbols in log2-space
+        given the counts and leafs and return logprobs and counts in the leafs
+        """
+        if self._rself == None:
+            """ not yet initialized"""
+            self.__setleafs()
+            
+        rself = 0
+        newleafs = [] # it is possible that we have some leafs that
+                            # do actually not occur in the sequence
+        
+        symbollogprobs = dict()
+        symbolcountsleafs = dict()
+        symbolcounts = self.__getcountsallnodes()
+        for key in self._leafs:
+            if key in symbolcounts:
+                counts = symbolcounts[key]
+                logprobs = self._counts2logprobs(counts)
+                symbollogprobs[key] = logprobs
+                symbolcountsleafs[key] = [count for count in counts]
+                rself -= sum([a*b for a,b in zip(counts,logprobs)])
+                newleafs += [key]
+                
+        self._rself = rself/self._sequencelength
+        self._leafs = newleafs
+        return symbollogprobs,symbolcountsleafs
+        
+    def __setleafs(self):
+        
+        """ Construct the MAP model corresponding to the given symbol counts at 
+        maximum depth of the tree, and also calculate achievable 
+        compression rate on self (given the model)
+        
+        """
+        # Construct the model corresponding to Counts
+        allcounts = self.__getcountsallnodes() # counts at various depths
+        treepe = self.__getpe(allcounts)
+        self.__getpm(treepe)
+        
+    
+    def __getcountsallnodes(self):
+        """ Given the symbol counts at maximum depth, recover the counts at 
+        decreasing depths until and including the root of the tree
+        """
+            
+        tree = dict(self._symbolcounts)
+        counts_previous_depth = dict(self._symbolcounts)
+        
+        for depth in reversed(range(1,self._maximumdepth+1)):
+            counts_current_depth = dict()
+            for key in counts_previous_depth:
+                # calc predecessor:
+                newkey = key[:-1]
+                if newkey in counts_current_depth:
+                    counts_current_depth[newkey] =  [sum(x) for \
+                        x in zip(counts_current_depth[newkey],
+                        counts_previous_depth[key])
+                        ]
+                else:
+                    counts_current_depth[newkey] = counts_previous_depth[key]
+                    
+            counts_previous_depth = counts_current_depth
+            tree.update(counts_current_depth)
+        return tree
+    def __getpe(self,tree):
+        """ Given the symbol counts at various depths, calculate the memoryless
+        probabilities (in log2-space) of the corresponding sequences 
+        using the KT estimator
+        
+        KT-estimate is defined as:
+        Pe := Prod_{foreach symbol in ALPHABET}( (symbol counts-1/2)! ) / ..
+           ( ( total symbol counts - len(ALPHABET)/2 )! ) 
+        
+        Keyword arguments:
+        tree:   (dict) : keys are occuring contexts (str), counts are 
+                            symbol counts for symbols of alphabet given context
+        
+        Returns:
+        tree_pe: (dict): keys are occuring contexts (str), values are the 
+            memoryless probabilities of the sequence corresponding to this context
+            / we define log_2(0) = 0
+        """
+        
+        treepe = dict()
+        for context,vals in tree.items():
+            lengthsubseq = sum(vals)
+            if lengthsubseq > 0:
+                # KT - estimator
+                denum = np.log2(np.fromiter(range(lengthsubseq), float)+len(ALPHABET)/2).sum()
+                numer = 0
+                for x in vals:
+                    if x>0:
+                        numer+=np.log2(np.fromiter(range(1,x+1), float)-1/2).sum()
+                treepe[context] = numer-denum
+            else:
+                treepe[context] = 0            
+        return treepe
+    
+    def __getpm(self,treepe):
+        """ Given the the memoryless probabilities (in log2-space) of the
+        sequences corresponding to the different contexts, find the maximum a
+        posteriori probability for each context (= node)
+        
+        maximum a posteriori probability is defined as:
+        Pm := max( alpha* Pe ; (1-alpha)*Prod_{children} Pe)
+        where alpha = (len(ALPHABET)-1)/len(ALPHABET)
+        
+        Keyword arguments:
+        treepe:   (dict) : keys are occuring contexts (str), values are the 
+            memoryless probabilities (in log2-space) of the sequences 
+            corresponding to the different contexts
+        
+        Calculates:
+        treepm: (dict) keys are occuring contexts (str), values are the 
+            maximum a posteriori probabilities of the sequence corresponding to 
+            this context
+            / we defined log_2(0) = 0
+        
+        Returns:
+        leafs: (list): tuples that correspond to the selected leafs
+        """
+        # define the penalties
+        alpha = np.log2(len(ALPHABET)-1)-np.log2(len(ALPHABET))
+        alpha_inv = -np.log2(len(ALPHABET))
+        
+        branches = [] # 
+        tree_pm = dict()
+        # from max depth to less depth
+        for ctxt in sorted(treepe, key=len, reverse=True):
+            if len(ctxt)== self._maximumdepth :
+                # this is initialization
+                tree_pm[ctxt] = treepe[ctxt]
+            else:
+                # calculate sum of children Pm
+                child_sum = 0
+                for symbol in ALPHABET:
+                    child = ctxt+symbol
+                    children = []
+                    if child in tree_pm:
+                        child_sum += tree_pm[child]
+                        children.append(child)
+                # compare the values
+                if (alpha + treepe[ctxt]) >= (alpha_inv+child_sum):   
+                    tree_pm[ctxt] = alpha + treepe[ctxt]
+                    # this may be a leaf
+                else:
+                    tree_pm[ctxt] = alpha_inv+child_sum
+                    # this may be a branch
+                    branches.append(ctxt)
+        # Now start at root and select leaf if in leafs
+        self._leafs = self.__findleafs(branches)
+        
+    def __findleafs(self,branches,key=''):
+        """ This recursive formula returns the leafs of the tree, given a list of
+        branches. 
+        
+        Returns key if key is not a branch, else returns the result of self on the 
+        children of key.
+        
+        Keyword arguments:
+        branches:   (list) these are possible branches in the tree. (nodes that 
+        need memory) 
+        key: (default None), this parameter is used to recursively increase the 
+        depth of the processed node
+        
+        Returns:
+        leafs: (list): tuples that correspond to the selected leafs
+        """
+        leafs = []
+        if key in branches:
+            # then look at children
+            for symbol in ALPHABET:
+                leafs += self.__findleafs(branches,key+symbol)
+        else:
+            leafs.append(key)
+        return leafs
        
             
 
