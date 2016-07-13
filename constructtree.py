@@ -21,10 +21,11 @@ import argparse
 from Bio import SeqIO
 from contexttree import fulltree
 import datetime
+import gzip 
 #import json
 import pickle
 
-parser = argparse.ArgumentParser(description='Load all the data files (fasta format), construct context tree model, and store it (pickle format)')
+parser = argparse.ArgumentParser(description='Load all the data files (zipped fastq format), construct context tree model, and store it (pickle format)')
 parser.add_argument('-i', nargs='+', required=True,
                     help='input filenames (fasta)')
 parser.add_argument('-o', nargs=1, required=True,
@@ -47,8 +48,9 @@ print(' load data and count symbols')
 tree = fulltree(depth)
 for filename in filenamesin:
     print(' loading: {0}'.format(filename))
-    handle = open(filename, "rU")
-    for record in SeqIO.parse(handle, "fasta"):
+    handle = gzip.open(filename,'rt')
+    #handle = open(filename, "rU")
+    for record in SeqIO.parse(handle, "fastq"):
         sequences = record.seq.split('N')
         for sequence in sequences:
             tree.updatesymbolcounts(sequence)
