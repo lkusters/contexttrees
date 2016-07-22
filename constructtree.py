@@ -25,9 +25,9 @@ import gzip
 #import json
 import pickle
 
-parser = argparse.ArgumentParser(description='Load all the data files (zipped fastq format), construct context tree model, and store it (pickle format)')
+parser = argparse.ArgumentParser(description='Load all the data files (zipped fasta/fastq format), construct context tree model, and store it (pickle format)')
 parser.add_argument('-i', nargs='+', required=True,
-                    help='input filenames (fasta)')
+                    help='input filenames (.fna.gz or .fastq.gz)')
 parser.add_argument('-o', nargs=1, required=True,
                     help='output filename (storing the context tree model)')
 parser.add_argument('-t', type=str ,default = ['no','description','given'],nargs='+', required=False,
@@ -50,11 +50,21 @@ for filename in filenamesin:
     print(' loading: {0}'.format(filename))
     handle = gzip.open(filename,'rt')
     #handle = open(filename, "rU")
-    for record in SeqIO.parse(handle, "fastq"):
-        sequences = record.seq.split('N')
-        for sequence in sequences:
-            tree.updatesymbolcounts(sequence)
-    handle.close()
+    checkextension = filename.split('.')
+    if checkextension[-2] == 'fna':
+        for record in SeqIO.parse(handle, "fasta"):
+            sequences = record.seq.split('N')
+            for sequence in sequences:
+                tree.updatesymbolcounts(sequence)
+        handle.close()
+    elif checkextension[-2] == 'fastq':
+        for record in SeqIO.parse(handle, "fastq"):
+            sequences = record.seq.split('N')
+            for sequence in sequences:
+                tree.updatesymbolcounts(sequence)
+        handle.close()
+    else:
+        print("filename extension {0} not recognised".format(checkextension[-2]))
 
 completedtaskat = "{0}".format(str(datetime.datetime.now()))
 print(' completed at: '+completedtaskat)
