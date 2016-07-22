@@ -34,11 +34,19 @@ parser.add_argument('-t', type=str ,default = ['no','description','given'],nargs
                     help='description of the performed experiment',dest='description')
 parser.add_argument('-d',nargs=1,type=int,required=True,dest='depth',
                     help='depth of the tree')
+parser.add_argument('-r',nargs=1,type=str,required=True,dest='revcomp',
+                    help='automatically also include reverse complement of each sequence? y/n')
 
 args = parser.parse_args()
 filenamesin = args.i
 filenameout = args.o[0]
 depth = args.depth[0]
+if args.revcomp[0] == 'y':
+    revcom = True
+elif args.revcomp[0] == 'n':
+    revcom = False
+else:
+    raise ValueError("not clear wether reverse complement should be included, choose -r y/n",args.revcomp[0])
 
 startedtaskat = "{0}".format(str(datetime.datetime.now()))
 print('-Performing construction task: '+' '.join(args.description)+'-')
@@ -55,13 +63,17 @@ for filename in filenamesin:
         for record in SeqIO.parse(handle, "fasta"):
             sequences = record.seq.split('N')
             for sequence in sequences:
-                tree.updatesymbolcounts(sequence)
+                tree.updatesymbolcounts(str(sequence))
+                if revcom:
+                    tree.updatesymbolcounts(str(sequence.reverse_complement()))
         handle.close()
     elif checkextension[-2] == 'fastq':
         for record in SeqIO.parse(handle, "fastq"):
             sequences = record.seq.split('N')
             for sequence in sequences:
-                tree.updatesymbolcounts(sequence)
+                tree.updatesymbolcounts(str(sequence))
+                if revcom:
+                    tree.updatesymbolcounts(str(sequence.reverse_complement()))
         handle.close()
     else:
         print("filename extension {0} not recognised".format(checkextension[-2]))
